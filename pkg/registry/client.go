@@ -1,12 +1,26 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	"github.com/docker/distribution/manifest/schema1"
+
+	//"strings"
 	"time"
 )
+
+type repositoriesResponse struct {
+	Repositories []string `json:"repositories"`
+}
+
+type tagsResponse struct {
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
+}
 
 // TagData represents only necessary fields from maniest
 type TagData struct {
@@ -65,18 +79,86 @@ func New(options RegistryClientOptions) *registryClient {
 	}
 }
 
+func (rc *registryClient) GetImageData(repo string) ([]ImageData, error) {
+
+	bodyText, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/tags/list", rc.hostname, repo))
+	if err != nil {
+		return nil, err
+	}
+
+	tagsResp := tagsResponse{}
+
+	err = json.Unmarshal(bodyText, &tagsResp)
+	if err != nil {
+		return nil, err
+	}
+
+	returnImageData := []ImageData{}
+	for _, tag := range tagsResp.Tags {
+		bodyText1, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/manifests/%s", rc.hostname, tagsResp.Name, tag))
+		if err != nil {
+			return nil, err
+		}
+
+		mani := schema1.Manifest{}
+
+		err = json.Unmarshal(bodyText1, &mani)
+		if err != nil {
+			return nil, err
+		}
+
+		v1Compatibility := V1Compatibility{}
+
+		err = json.Unmarshal([]byte(mani.History[0].V1Compatibility), &v1Compatibility)
+		if err != nil {
+			return nil, err
+		}
+
+		returnImageData = append(returnImageData, ImageData{
+			Name:    tagsResp.Name,
+			Tag:     tag,
+			Created: v1Compatibility.Created,
+		})
+
+	}
+
+	return returnImageData, nil
+
+}
+
+func (rc *registryClient) GetRepos() ([]ImageData, error) {
+	bodyText, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/_catalog", rc.hostname))
+	if err != nil {
+		return nil, err
+	}
+
+	repoResp := repositoriesResponse{}
+	err = json.Unmarshal(bodyText, &repoResp)
+	if err != nil {
+		return nil, err
+	}
+
+	returnImageData := []ImageData{}
+	for _, repo := range repoResp.Repositories {
+
+		images, err := rc.GetImageData(repo)
+		if err != nil {
+			continue //return nil, err
+		}
+
+		returnImageData = append(returnImageData, images...)
+	}
+
+	return returnImageData, nil
+}
+
 func (rc *registryClient) requestAndGetBody(query string) ([]byte, error) {
 
-	req, err := http.NewRequest("GET", query, nil)
+	resp, err := rc.httpClient.Get(query)
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth("", "")
-
-	resp, err := rc.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	defer resp.Body.Close()
 
 	bodyText, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -94,11 +176,12 @@ type BasicTransport struct {
 }
 
 func (t *BasicTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if strings.HasPrefix(req.URL.String(), t.URL) {
+	if strings.Contains(req.URL.String(), t.URL) {
 		if t.Username != "" || t.Password != "" {
 			req.SetBasicAuth(t.Username, t.Password)
 		}
 	}
+
 	resp, err := t.Transport.RoundTrip(req)
 	return resp, err
 }

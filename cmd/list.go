@@ -16,13 +16,12 @@ limitations under the License.
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"os"
 
-	"github.com/docker/distribution/manifest/schema1"
+	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
+	"github.com/zawachte-msft/bupkis/pkg/registry"
 )
 
 type listOptions struct {
@@ -48,95 +47,37 @@ func init() {
 	RootCmd.AddCommand(listCmd)
 }
 
-type teer struct {
-	Repositories []string `json:"repositories"`
-}
-
-type gett struct {
-	Name string   `json:"name"`
-	Tags []string `json:"tags"`
-}
-
-type hmm struct {
-	Created string `json:"created"`
-}
-
 func runList() error {
 
-	bodyText, err := requestAndGetBody(fmt.Sprintf("https://%s/v2/_catalog", listOpts.hostname))
+	client := registry.New(registry.RegistryClientOptions{Hostname: listOpts.hostname})
+
+	images, err := client.GetRepos()
 	if err != nil {
 		return err
 	}
 
-	test := teer{}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Name", "Tag", "CreatedAt"})
+	table.SetAutoWrapText(false)
+	table.SetAutoFormatHeaders(true)
+	table.SetHeaderAlignment(ALIGN_LEFT)
+	table.SetAlignment(ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetTablePadding("\t") // pad with tabs
+	table.SetNoWhiteSpace(true)
 
-	err = json.Unmarshal(bodyText, &test)
-	if err != nil {
-		return err
+	imageData := [][]string{}
+	for _, image := range images {
+
+		imageName := fmt.Sprintf("%s/%s", listOpts.hostname, image.Name)
+		//fmt.Printf("%s\t%s\n", imageName, image.Created)
+		table.Append([]string{imageName, image.Tag, image.Created.Format("2 Jan 2006 15:04:05")})
 	}
-
-	for _, asf := range test.Repositories {
-
-		bodyText, err := requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/tags/list", listOpts.hostname, asf))
-		if err != nil {
-			return err
-		}
-
-		test := gett{}
-
-		err = json.Unmarshal(bodyText, &test)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("%s %s\n", test.Name, test.Tags)
-
-		bodyText1, err := requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/manifests/%s", listOpts.hostname, test.Name, test.Tags[0]))
-		if err != nil {
-			return err
-		}
-
-		test1 := schema1.Manifest{}
-
-		err = json.Unmarshal(bodyText1, &test1)
-		if err != nil {
-			return err
-		}
-
-		fmt.Println() //(\n", test1.History[0])
-
-		test2 := hmm{}
-
-		err = json.Unmarshal([]byte(test1.History[0].V1Compatibility), &test2)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s\n", test2.Created)
-
-	}
+	table.Render()
 
 	return nil
-}
-
-func requestAndGetBody(query string) ([]byte, error) {
-
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", query, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.SetBasicAuth("", "")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return bodyText, nil
 }
