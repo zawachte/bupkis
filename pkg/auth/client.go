@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/containerd/containerd/remotes"
+	ctypes "github.com/docker/cli/cli/config/types"
 )
 
 // Common errors
@@ -21,4 +22,6 @@ type Client interface {
 	// Logout(ctx context.Context, hostname string) error
 	// Resolver returns a new authenticated resolver.
 	Resolver(ctx context.Context, client *http.Client, plainHTTP bool) (remotes.Resolver, error)
+	Credential(hostname string) (string, string, error)
+	GetAllCredentials() (map[string]ctypes.AuthConfig, error)
 }

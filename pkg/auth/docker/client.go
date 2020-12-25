@@ -1,7 +1,7 @@
 package docker
 
 import (
-	"github.com/zwachtel11/peg/pkg/auth"
+	"github.com/zawachte-msft/bupkis/pkg/auth"
 
 	"github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/config/configfile"

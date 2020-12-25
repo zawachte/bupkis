@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/docker/distribution/manifest/schema1"
+	auth "github.com/zawachte-msft/bupkis/pkg/auth/docker"
 
 	//"strings"
 	"time"
@@ -40,9 +41,10 @@ type V1Compatibility struct {
 
 // ImageData represents image object
 type ImageData struct {
-	Name    string
-	Created time.Time
-	Tag     string
+	Name     string
+	Created  time.Time
+	Tag      string
+	Hostname string
 }
 
 // AllImages is used to get all the images
@@ -55,33 +57,71 @@ type RegistryClientOptions struct {
 }
 
 type registryClient struct {
-	hostname   string
-	httpClient *http.Client
+	hostname      string
+	httpClientMap map[string]*http.Client
 }
 
-func New(options RegistryClientOptions) *registryClient {
+func New(options RegistryClientOptions) (*registryClient, error) {
 
-	basicAuthTransport := &BasicTransport{
-		Transport: http.DefaultTransport,
-		URL:       options.Hostname,
-		Username:  "",
-		Password:  "",
+	httpClientMap := make(map[string]*http.Client)
+
+	// Prepare auth client
+	cli, err := auth.NewClient()
+	if err != nil {
+		return nil, err
 	}
-	errorTransport := &ErrorTransport{
-		Transport: basicAuthTransport,
+
+	if options.Hostname != "" {
+		username, password, err := cli.Credential(options.Hostname)
+		if err != nil {
+			return nil, err
+		}
+
+		basicAuthTransport := &BasicTransport{
+			Transport: http.DefaultTransport,
+			URL:       options.Hostname,
+			Username:  username,
+			Password:  password,
+		}
+		errorTransport := &ErrorTransport{
+			Transport: basicAuthTransport,
+		}
+
+		httpClientMap[options.Hostname] = &http.Client{
+			Transport: errorTransport,
+		}
+	} else {
+		authConfigMap, err := cli.GetAllCredentials()
+		if err != nil {
+			return nil, err
+		}
+
+		for hostname, authConfig := range authConfigMap {
+			basicAuthTransport := &BasicTransport{
+				Transport: http.DefaultTransport,
+				URL:       hostname,
+				Username:  authConfig.Username,
+				Password:  authConfig.Password,
+			}
+			errorTransport := &ErrorTransport{
+				Transport: basicAuthTransport,
+			}
+
+			httpClientMap[hostname] = &http.Client{
+				Transport: errorTransport,
+			}
+		}
 	}
 
 	return &registryClient{
-		hostname: options.Hostname,
-		httpClient: &http.Client{
-			Transport: errorTransport,
-		},
-	}
+		hostname:      options.Hostname,
+		httpClientMap: httpClientMap,
+	}, nil
 }
 
-func (rc *registryClient) GetImageData(repo string) ([]ImageData, error) {
+func (rc *registryClient) GetImageDataList(hostname string, repo string) ([]ImageData, error) {
 
-	bodyText, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/tags/list", rc.hostname, repo))
+	bodyText, err := rc.requestAndGetBody(hostname, fmt.Sprintf("https://%s/v2/%s/tags/list", hostname, repo))
 	if err != nil {
 		return nil, err
 	}
@@ -95,39 +135,67 @@ func (rc *registryClient) GetImageData(repo string) ([]ImageData, error) {
 
 	returnImageData := []ImageData{}
 	for _, tag := range tagsResp.Tags {
-		bodyText1, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/%s/manifests/%s", rc.hostname, tagsResp.Name, tag))
+
+		imageData, err := rc.GetImageData(hostname, tagsResp.Name, tag)
 		if err != nil {
 			return nil, err
 		}
 
-		mani := schema1.Manifest{}
-
-		err = json.Unmarshal(bodyText1, &mani)
-		if err != nil {
-			return nil, err
-		}
-
-		v1Compatibility := V1Compatibility{}
-
-		err = json.Unmarshal([]byte(mani.History[0].V1Compatibility), &v1Compatibility)
-		if err != nil {
-			return nil, err
-		}
-
-		returnImageData = append(returnImageData, ImageData{
-			Name:    tagsResp.Name,
-			Tag:     tag,
-			Created: v1Compatibility.Created,
-		})
-
+		returnImageData = append(returnImageData, imageData)
 	}
 
 	return returnImageData, nil
 
 }
+func (rc *registryClient) GetImageData(hostname string, repo string, tag string) (ImageData, error) {
+	bodyText1, err := rc.requestAndGetBody(hostname, fmt.Sprintf("https://%s/v2/%s/manifests/%s", hostname, repo, tag))
+	if err != nil {
+		return ImageData{}, err
+	}
+
+	mani := schema1.Manifest{}
+
+	err = json.Unmarshal(bodyText1, &mani)
+	if err != nil {
+		return ImageData{}, err
+	}
+
+	v1Compatibility := V1Compatibility{}
+
+	err = json.Unmarshal([]byte(mani.History[0].V1Compatibility), &v1Compatibility)
+	if err != nil {
+		return ImageData{}, err
+	}
+
+	return ImageData{
+		Name:     repo,
+		Tag:      tag,
+		Created:  v1Compatibility.Created,
+		Hostname: hostname,
+	}, nil
+
+}
 
 func (rc *registryClient) GetRepos() ([]ImageData, error) {
-	bodyText, err := rc.requestAndGetBody(fmt.Sprintf("https://%s/v2/_catalog", rc.hostname))
+
+	returnImageData := []ImageData{}
+
+	for hostname := range rc.httpClientMap {
+		imageData, err := rc.GetReposByHostName(hostname)
+		if err != nil {
+			return nil, err
+		}
+
+		returnImageData = append(returnImageData, imageData...)
+	}
+
+	return returnImageData, nil
+}
+
+func (rc *registryClient) GetReposByHostName(hostname string) ([]ImageData, error) {
+
+	returnImageData := []ImageData{}
+	bodyText, err := rc.requestAndGetBody(hostname, fmt.Sprintf("https://%s/v2/_catalog", hostname))
 	if err != nil {
 		return nil, err
 	}
@@ -138,12 +206,11 @@ func (rc *registryClient) GetRepos() ([]ImageData, error) {
 		return nil, err
 	}
 
-	returnImageData := []ImageData{}
 	for _, repo := range repoResp.Repositories {
 
-		images, err := rc.GetImageData(repo)
+		images, err := rc.GetImageDataList(hostname, repo)
 		if err != nil {
-			continue //return nil, err
+			continue
 		}
 
 		returnImageData = append(returnImageData, images...)
@@ -152,9 +219,9 @@ func (rc *registryClient) GetRepos() ([]ImageData, error) {
 	return returnImageData, nil
 }
 
-func (rc *registryClient) requestAndGetBody(query string) ([]byte, error) {
+func (rc *registryClient) requestAndGetBody(hostname string, query string) ([]byte, error) {
 
-	resp, err := rc.httpClient.Get(query)
+	resp, err := rc.httpClientMap[hostname].Get(query)
 	if err != nil {
 		return nil, err
 	}

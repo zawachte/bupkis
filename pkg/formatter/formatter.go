@@ -1,16 +1,24 @@
 package formatter
 
+import (
+	"os"
 
-const (
-	defaultImageTableFormat = "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{if .CreatedSince }}{{.CreatedSince}}{{else}}N/A{{end}}\t{{.Size}}"
-	imageIDHeader           = "IMAGE ID"
-	repositoryHeader        = "REPOSITORY"
-	tagHeader               = "TAG"
-	digestHeader            = "DIGEST"
-	createdSinceHeader      = "CREATED"
-	createdAtHeader         = "CREATED AT"
-	sizeHeader              = "SIZE"
-	labelsHeader            = "LABELS"
-	nameHeader              = "NAME"
+	"github.com/olekukonko/tablewriter"
 )
 
+func PrintOutput(data [][]string) {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Name", "Tag", "Created"})
+	table.SetAutoWrapText(false)
+	table.SetAutoFormatHeaders(true)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+
+	table.AppendBulk(data)
+	table.Render()
+}

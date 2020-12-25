@@ -44,6 +44,25 @@ func (c *Client) Credential(hostname string) (string, string, error) {
 	return "", "", err
 }
 
+func (c *Client) GetAllCredentials() (map[string]ctypes.AuthConfig, error) {
+
+	returnMap := make(map[string]ctypes.AuthConfig)
+	for _, cfg := range c.configs {
+
+		localMap, err := cfg.GetAllCredentials()
+		if err != nil {
+			// fall back to next config
+			continue
+		}
+
+		for hostname, authConfig := range localMap {
+			returnMap[hostname] = authConfig
+		}
+	}
+
+	return returnMap, nil
+}
+
 // resolveHostname resolves Docker specific hostnames
 func resolveHostname(hostname string) string {
 	switch hostname {

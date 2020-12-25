@@ -16,12 +16,10 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
+	"github.com/zawachte-msft/bupkis/pkg/formatter"
 	"github.com/zawachte-msft/bupkis/pkg/registry"
+	"github.com/zawachte-msft/bupkis/pkg/util"
 )
 
 type listOptions struct {
@@ -35,9 +33,12 @@ var listCmd = &cobra.Command{
 	Short: "list a container registry",
 	Long:  "list a container registry",
 	Example: "	bupkis list",
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		listOpts.hostname = args[0]
+		if len(args) != 0 {
+			listOpts.hostname = args[0]
+		}
+
 		return runList()
 	},
 }
@@ -49,35 +50,17 @@ func init() {
 
 func runList() error {
 
-	client := registry.New(registry.RegistryClientOptions{Hostname: listOpts.hostname})
+	client, err := registry.New(registry.RegistryClientOptions{Hostname: listOpts.hostname})
+	if err != nil {
+		return err
+	}
 
 	images, err := client.GetRepos()
 	if err != nil {
 		return err
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Name", "Tag", "CreatedAt"})
-	table.SetAutoWrapText(false)
-	table.SetAutoFormatHeaders(true)
-	table.SetHeaderAlignment(ALIGN_LEFT)
-	table.SetAlignment(ALIGN_LEFT)
-	table.SetCenterSeparator("")
-	table.SetColumnSeparator("")
-	table.SetRowSeparator("")
-	table.SetHeaderLine(false)
-	table.SetBorder(false)
-	table.SetTablePadding("\t") // pad with tabs
-	table.SetNoWhiteSpace(true)
-
-	imageData := [][]string{}
-	for _, image := range images {
-
-		imageName := fmt.Sprintf("%s/%s", listOpts.hostname, image.Name)
-		//fmt.Printf("%s\t%s\n", imageName, image.Created)
-		table.Append([]string{imageName, image.Tag, image.Created.Format("2 Jan 2006 15:04:05")})
-	}
-	table.Render()
+	formatter.PrintOutput(util.ImagesToNestedArray(images))
 
 	return nil
 }
